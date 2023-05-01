@@ -1,0 +1,74 @@
+import os
+import csv
+import time
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
+import ssl
+
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+
+
+slack_client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
+
+channel_name = "your_channel_name" #replace with the name of the channel
+
+def fetch_existing_messages(retries=3):
+    channel_id = None
+    for response in slack_client.conversations_list():
+        for channel in response["channels"]:
+            if channel["name"] == channel_name:
+                channel_id = channel["id"]
+                break
+
+    if channel_id is None:
+        print("Channel not found")
+        return []
+
+    try:
+        response = slack_client.conversations_history(channel=channel_id)
+        return response["messages"]
+    except SlackApiError as e:
+        print("Error fetching messages: {}".format(e))
+
+def parse_messages(messages):
+    parsed_data = []
+
+    for message in messages:
+        if "user" in message and "text" in message:
+            user_id = message["user"]
+            user_response = slack_client.users_info(user=user_id)
+            user_name = user_response["user"]["real_name"]
+
+            linkedin_link = ""
+            for word in message["text"].split():
+                if "linkedin.com" in word:
+                    linkedin_link = word
+                    break
+
+            if linkedin_link:
+                parsed_data.append({"name": user_name, "linkedin": linkedin_link})
+
+    return parsed_data
+
+def save_to_csv(parsed_data, file_name="linkedin_data.csv"):
+    with open(file_name, "w", newline="", encoding="utf-8") as csvfile:
+        fieldnames = ["name", "linkedin"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in parsed_data:
+            writer.writerow(row)
+
+    print("CSV file created with LinkedIn data")
+
+try:
+    messages = fetch_existing_messages()
+    if messages:
+        parsed_data = parse_messages(messages)
+        save_to_csv(parsed_data)
+except Exception as e:
+    print("Error: {}".format(e))
